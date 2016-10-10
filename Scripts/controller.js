@@ -37,10 +37,11 @@ angular.module('RegNum', []).filter('RegNum', function() {
   };
 });
 
-app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window','memory','assembler', function ($scope,$routeParams, $timeout,$window,memory,assembler){
+app.controller('MainController', ['$scope','$routeParams','$timeout','$window','$interval','simulator','memory','assembler', function ($scope,$routeParams,$timeout,$window,$interval,simulator,memory,assembler){
     $scope.isRunning = false;
     $scope.memory = memory;
     $scope.assembler = assembler;
+    $scope.simulator = simulator;
     $scope.displayMemory = memory.subset(0,255);
     $scope.isMonitor = memory.isMonitor;
     $scope.error = '';
@@ -50,7 +51,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
     $scope.hideDataLabels = true;
     $scope.showHighRegisters = false;
     $scope.isDev = true;
-    $scope.showMonitorBorder = false;
+    $scope.zoomDisplay = true;
     $scope.regs = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
     $scope.flags = [0,0,0,0];
     $scope.output = Array(60);
@@ -70,12 +71,14 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
           ];
 
     $scope.user = {email:"",fname:"",lname:""};
-    $scope.navTitles = ["Simulator","Log-In","All Projects"];
+    $scope.navTitles = ["Simulator","Log-In"];
     $scope.project = {title: "",desc:"",isPublic:true};
     $scope.projId = "";
     $scope.isSave = false; // Hide or Show save button
     $scope.loading = false;
-
+    $scope.frameRate = 2;
+    $scope.timer = null;
+    $scope.showGFXDisplay = true;
 
     var config = {
       apiKey: "AIzaSyC0RqVCfBUDd-IsZXJ-v8-g0MpGKxuM1ig",
@@ -86,40 +89,47 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
     firebase.initializeApp(config);
     var database = firebase.database();
 
-
+    var rate = 2.0;
     var index = 0, ic = 0, exit = 0;
     var lastSWI = -1;
-    var codeSegmentIndex = 0, dataSegmentIndex = 0; // Position of .text/.code and .data in editor
+    var codeSegmentIndex = 0, dataSegmentIndex = 0, gfxSegment = 0; // Position of .text/.code and .data in editor
     var ppc, psp, plr; // Previous Values
 
-    $window.onload = function(){
+    $scope.$on('$routeChangeSuccess', function() {
+      // $routeParams should be populated here
       $scope.projId = $routeParams.proj_id;
-      console.log($scope.projId + " " + $routeParams.proj_id);
       if($scope.projId)
         $scope.fetchProject($scope.projId);
       else
         $scope.isSave = true;
-      $scope.$apply();
+    });
+
+    $window.onload = function(){
+      $scope.startTimer();
     };
 
 
     $scope.save = function(){
-      if($scope.projId){
-        // Update Code
-        if($scope.isSave){
-          var date = new Date;
-          var key = $scope.projId;
-          firebase.database().ref('projects/'+key).update({
-            project: getAssemblyCode(),
-            updated_at: date.getTime()
-          }).then(function(){
-            alert("Project Updated");
-          });
+      if(firebase.auth().currentUser){
+        if($scope.projId){
+          // Update Code
+          if($scope.isSave){
+            var date = new Date;
+            var key = $scope.projId;
+            firebase.database().ref('projects/'+key).update({
+              project: getAssemblyCode(),
+              updated_at: date.getTime()
+            }).then(function(){
+              alert("Project Updated");
+            });
+          }else{
+            alert("You can't save this project");
+          }
         }else{
-          alert("You can't save this project");
+          showSaveDialog();
         }
       }else{
-        showSaveDialog();
+        alert("You must log-in to save project");
       }
     };
 
@@ -129,13 +139,18 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
       firebase.database().ref('projects/'+id).on('value', function(data) {
           if(data.val().isPublic  || data.val().user == getUserId()){
             var arrProj = data.val().project;
-            $scope.isSave = data.val().user == getUserId();
+            if(firebase.auth().currentUser){
+              $scope.isSave = data.val().user == getUserId();
+            }else{
+              $scope.isSave = false;
+            }
             var proj = "";
             for(var i = 0; i<arrProj.length; i++){ proj += arrProj[i]+"\n";}
             editor.setValue(proj);
           }else{
             alert("This Project is Not Public");
           }
+          $scope.updateNavBar(firebase.auth().currentUser);
       });
     };
 
@@ -166,6 +181,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
         created_at: date.getTime()
       }).then(function(){
         alert("Project Created!!");
+        window.location.href="projects.html";
       });
     }
 
@@ -183,7 +199,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
       if(firebase.auth().currentUser != null){
         if($scope.isSave){
           switch (i) {
-            case 0: break;
+            case 0: window.location.href = "Simulator.html"; break;
             case 1: window.location.href = "projects.html"; break;
             case 2: window.location.href = "projects-all.html"; break;
             case 3: $scope.save(); break;
@@ -192,7 +208,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
           }
         }else{
           switch (i) {
-            case 0: break;
+            case 0: window.location.href = "Simulator.html"; break;
             case 1: window.location.href = "projects.html"; break;
             case 2: window.location.href = "projects-all.html"; break;
             case 3: $scope.signOut(); break;
@@ -242,22 +258,26 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
     };
 
     $scope.reset = function () {
-        $("#sourceCode").val("");
         $("#swi").val("");
+        clearResult();
         if($scope.isDev){
-          clearResult();
+          $("#sourceCode").val("");
           var editor = ace.edit("assemblyCode");
           editor.setValue("; Write Assembly Code Here");
+          $scope.memory.reset();
+          $scope.sourceCode = [];
+          $scope.dataLabels = {};
+        }else{
+          $scope.sp = parseInt(memory.loadWord(0));
+          $scope.pc = parseInt(memory.loadWord(4));
+          for(var i = 0; i<$scope.sourceCode.length; i++) $scope.sourceCode[i].color = "none";
         }
         $scope.continue = "Run";
         $scope.error = '';
         $scope.selectedLine = -1;
-        $scope.sourceCode = [];
-        $scope.dataLabels = {};
         for(var i = 0; i<16; i++) $scope.regs[i] = 0;
         for(var i = 0; i< 4; i++) $scope.flags[i] = 0;
         for(var i = 0; i<60; i++) $scope.output[i] = "";
-        $scope.memory.reset();
         index = $scope.outputIdx = ic = 0;
         lastSWI = -1;
         codeSegmentIndex = dataSegmentIndex = exit = 0;
@@ -319,7 +339,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
         for(var i = 0; i<instr.length; i++)
           instr[i] = parseInt(Hex2Dec(instr[i]));
       if(instr[index] != 0xDEAD && !isSWI(instr[index]) && lastSWI == -1){
-        decode(instr[index++],$scope);
+        $scope.simulator.decode(instr[index++],$scope);
       }
     };
 
@@ -343,7 +363,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
           if(lastSWI != -1 && !exit) alert("Take a look at the Software Interrupts Console, looks like it needs your attention");
           while(instr != 0xDEAD && !isSWI(instr) && lastSWI == -1 && !exit){
             updateSpecialRegs();
-            decode(instr,$scope);
+            $scope.simulator.decode(instr,$scope);
             for(var i = 0; i<$scope.sourceCode.length; i++)
                if($scope.pc == $scope.sourceCode[i].address && $scope.sourceCode[i].break)
                   breakFlag = true;
@@ -377,7 +397,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
             $scope.continue = "Continue";
             for(var i = 0; i<$scope.sourceCode.length; i++)
               $scope.sourceCode[i].color = $scope.pc == $scope.sourceCode[i].address ? "rgba(72,156,72,0.6)":"none";
-            decode(instr,$scope);
+            $scope.simulator.decode(instr,$scope);
             if(ppc == $scope.pc)
               $scope.pc+=2;
           }else{
@@ -413,20 +433,73 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
       return monitor2D;
     };
 
-    $scope.changeMonitorBorder = function(){
-      if(!$scope.showMonitorBorder) $('.monitor-block').css('border-style','none');
-      else $('.monitor-block').css('border-style','solid');
+    $scope.zoomDisplayChanged = function(){
+      var c = document.getElementById("monitorCanvas");
+      if($scope.zoomDisplay){
+        c.width = "640";
+        c.height="480";
+      }else{
+        c.width = "320";
+        c.height="240";
+      }
+      $scope.refreshMonitor();
     };
 
     $scope.refreshMonitor = function(){
       var c = document.getElementById("monitorCanvas");
       var ctx = c.getContext("2d");
-      ctx.fillStyle = "orange";
-      for(var i = 0; i<640; i++)
-        for(var j = 0; j<480; j++)
-          ctx.fillRect(i,j,1,1);
+      var memColor = memory.subset(4096,80896);
+      var color = 0;
+      var colorObj;
+      for(var i = 0, ii = 0; i<320; i++, ii+=2){
+        for(var j = 0, jj = 0; j<240; j++, jj+=2){
+          color = memColor[i*240+j];
+          colorObj = $scope.decodeColor(color);
+          ctx.fillStyle = "rgba("+colorObj.red+","+colorObj.green+","+colorObj.blue+",1)";
+          if($scope.zoomDisplay){
+            ctx.fillRect(ii,jj,2,2);
+          }else{
+            ctx.fillRect(i,j,1,1);
+          }
+        }
+      }
     };
 
+     $scope.decodeColor = function(value){
+    	var r = value & 0xE0;
+      var g = ((value << 3) & 0xE0);
+      var b = (value << 6) & 0xFF;
+      return {
+      	red: r,
+        green: g,
+        blue: b
+      }
+    };
+
+    $scope.changeFrameRate = function(){
+      $scope.stopTimer();
+      if($scope.frameRate < 0 || $scope.frameRate > 60)
+        $scope.frameRate = 1;
+      $scope.startTimer();
+    };
+
+    //Timer start function.
+    $scope.startTimer = function () {
+        //Initialize the Timer to run every 1000 milliseconds i.e. one second.
+        $scope.timer = $interval(function () {
+            //Display the current time.
+            if(!$scope.isDev && $scope.showGFXDisplay)
+              $scope.refreshMonitor();
+        }, $scope.frameRate == 0 ? 1000:1000/$scope.frameRate);
+    };
+
+    //Timer stop function.
+    $scope.stopTimer = function () {
+        //Cancel the Timer.
+        if (angular.isDefined($scope.timer)) {
+            $interval.cancel($scope.timer);
+        }
+    };
 
     $scope.processSWI = function(e){
       // 1101111100000011
@@ -541,7 +614,9 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
 
     handleDirectives = function(instr){
       var memoryIndex = 512; // Start of Data Segment
+      var memoryGFXIndex = 4096; // Start of GFX Segment
       var label = "";
+      var isGFX = false;
       for(var i = 0; i<instr.length; i++){
         if(instr[i].indexOf(".") != -1){
           instr[i] = instr[i].trim();
@@ -551,7 +626,12 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
           }else if(instr[i].indexOf(".data") != -1){
               dataSegmentIndex = i;
               instr[i] = "";
-          }else if(instr[i].indexOf(".byte") != -1 && i>dataSegmentIndex){
+              isGFX = false;
+          }else if(instr[i].indexOf(".gfx") != -1){
+            gfxSegment = i;
+            instr[i] = "";
+            isGFX = true;
+          }else if(instr[i].indexOf(".byte") != -1 && (i>dataSegmentIndex || i>gfxSegment)){
             if(instr[i].indexOf(":") != -1){
               label = instr[i].substring(0,instr[i].indexOf(":"));
               instr[i] = instr[i].replace(label+":","").trim();
@@ -559,15 +639,25 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
             instr[i] = instr[i].replace(".byte","").trim();
             var bytes = instr[i].split(",");
             instr[i] = "";
-            $scope.dataLabels[label] = memoryIndex;
+            $scope.dataLabels[label] = isGFX ? memoryGFXIndex:memoryIndex;
             for(var j = 0; j<bytes.length; j++){
-              bytes[j] = bytes[j].replace('\'',"");
-              bytes[j] = bytes[j].replace('\'',"");
-              var ascii = bytes[j].charCodeAt(0);
-              memory.store(memoryIndex,ascii);
-              memoryIndex++;
+              var value = 0;
+              if(bytes[j].indexOf('\'') != -1){
+                bytes[j] = bytes[j].replace('\'',"");
+                bytes[j] = bytes[j].replace('\'',"");
+                value = bytes[j].charCodeAt(0); // ascii code
+              }else{
+                value = parseInt(bytes[j]);
+              }
+              if(isGFX){
+                memory.store(memoryGFXIndex,value);
+                memoryGFXIndex++;
+              }else{
+                memory.store(memoryIndex,value);
+                memoryIndex++;
+              }
             }
-          }else if((instr[i].indexOf(".short") != -1 || instr[i].indexOf(".half") != -1 || instr[i].indexOf(".hword") != -1)  && i>dataSegmentIndex){
+          }else if((instr[i].indexOf(".short") != -1 || instr[i].indexOf(".half") != -1 || instr[i].indexOf(".hword") != -1)  && (i>dataSegmentIndex || i>gfxSegment)){
             if(instr[i].indexOf(":") != -1){
               label = instr[i].substring(0,instr[i].indexOf(":"));
               instr[i] = instr[i].replace(label+":","").trim();
@@ -584,12 +674,17 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
             var shorts = instr[i].split(",");
             instr[i] = "";
             if(memoryIndex%2 != 0) memoryIndex++; // Align Shorts
-            $scope.dataLabels[label] = memoryIndex;
+            $scope.dataLabels[label] = isGFX ? memoryGFXIndex:memoryIndex;
             for(var j = 0; j<shorts.length; j++){
-              memory.storeHalf(memoryIndex,parseInt(shorts[j]));
-              memoryIndex+=2;
+              if(isGFX){
+                memory.storeHalf(memoryGFXIndex,parseInt(shorts[j]));
+                memoryGFXIndex+=2;
+              }else{
+                memory.storeHalf(memoryIndex,parseInt(shorts[j]));
+                memoryIndex+=2;
+              }
             }
-          }else if(instr[i].indexOf(".word") != -1 && i>dataSegmentIndex){
+          }else if(instr[i].indexOf(".word") != -1 && (i>dataSegmentIndex || i>gfxSegment)){
             if(instr[i].indexOf(":") != -1){
               label = instr[i].substring(0,instr[i].indexOf(":"));
               instr[i] = instr[i].replace(label+":","").trim();
@@ -598,12 +693,17 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
             var words = instr[i].split(",");
             instr[i] = "";
             while(memoryIndex%4 != 0) memoryIndex++; // Align Words
-            $scope.dataLabels[label] = memoryIndex;
+            $scope.dataLabels[label] = isGFX ? memoryGFXIndex:memoryIndex;
             for(var j = 0; j<words.length; j++){
-              memory.storeWord(memoryIndex,parseInt(words[j]));
-              memoryIndex+=4;
+              if(isGFX){
+                memory.storeWord(memoryGFXIndex,parseInt(words[j]));
+                memoryGFXIndex+=4;
+              }else{
+                memory.storeWord(memoryIndex,parseInt(words[j]));
+                memoryIndex+=4;
+              }
             }
-          }else if(instr[i].indexOf(".asciiz") != -1 && i>dataSegmentIndex){
+          }else if(instr[i].indexOf(".asciiz") != -1 && (i>dataSegmentIndex || i>gfxSegment)){
             if(instr[i].indexOf(":") != -1){
               label = instr[i].substring(0,instr[i].indexOf(":"));
               instr[i] = instr[i].replace(label+":","").trim();
@@ -611,7 +711,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
             instr[i] = instr[i].replace(".asciiz","").trim();
             var strings = instr[i].split(",");
             instr[i] = "";
-            $scope.dataLabels[label] = memoryIndex;
+            $scope.dataLabels[label] = isGFX ? memoryGFXIndex:memoryIndex;
             for(var j = 0; j<strings.length; j++){
               strings[j] = strings[j].replace("\"","");
               strings[j] = strings[j].replace("\"","");
@@ -623,7 +723,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
               memory.store(memoryIndex,0x0); // NULL Terminated String
               memoryIndex++;
             }
-          }else if(instr[i].indexOf(".space") != -1 && i>dataSegmentIndex){
+          }else if(instr[i].indexOf(".space") != -1 && (i>dataSegmentIndex || i>gfxSegment)){
             if(instr[i].indexOf(":") != -1){
               label = instr[i].substring(0,instr[i].indexOf(":"));
               instr[i] = instr[i].replace(label+":","").trim();
@@ -631,7 +731,7 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
             instr[i] = instr[i].replace(".space","").trim();
             var spaces = instr[i].split(",");
             instr[i] = "";
-            $scope.dataLabels[label] = memoryIndex;
+            $scope.dataLabels[label] = isGFX ? memoryGFXIndex:memoryIndex;
             for(var j = 0; j<strings.length; j++){
               for(var k = 0; k<parseInt(spaces[j]); k++)
                 memory.store(memoryIndex,0xFF);
@@ -679,12 +779,12 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
     $scope.updateNavBar = function(user){
       if(user){
         if($scope.isSave){
-          $scope.navTitles = ["Simulator","My Projects","All Projects","Save","Sign Out"];
+          $scope.navTitles = ["New Project","My Projects","All Projects","Save","Sign Out"];
         }else{
-          $scope.navTitles = ["Simulator","My Projects","All Projects","Sign Out"];
+          $scope.navTitles = ["New Project","My Projects","All Projects","Sign Out"];
         }
       }else{
-        $scope.navTitles = ["Simulator","Log-In","All Projects"];
+        $scope.navTitles = ["Simulator","Log-In"];
       }
     };
 
@@ -704,7 +804,8 @@ app.controller('MainController', ['$scope', '$routeParams', '$timeout','$window'
       firebase.auth().signOut().then(function() {
         // Sign-out successful.
         alert("You Signed Out");
-        $scope.updateNavBar();
+        $scope.updateNavBar(false);
+        $scope.user = {email:"",fname:"",lname:""};
         $scope.$apply();
       }, function(error) {
         // An error happened.

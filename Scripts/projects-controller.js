@@ -9,7 +9,7 @@ app.controller('ProjectsController', ['$scope', '$window', function($scope, $win
   $scope.projects = [
   ];
 
-  $scope.navTitles = ["Simulator","My Projects","All Projects","Sign Out"];
+  $scope.navTitles = ["New Project","My Projects","All Projects","Sign Out"];
 
   // Initialize Firebase
   var config = {
@@ -75,7 +75,8 @@ app.controller('ProjectsController', ['$scope', '$window', function($scope, $win
       // User is signed in.
       getUserName();
     } else {
-
+      alert("You must log in to view the projects");
+      window.location.href = "Simulator.html";
     }
   });
 
@@ -104,7 +105,6 @@ app.controller('ProjectsController', ['$scope', '$window', function($scope, $win
     }else{
       switch (i) {
         case 1: window.location.href = "sign-in.html"; break;
-        case 2: window.location.href = "projects-all.html"; break;
         default:
       }
     }
@@ -144,9 +144,11 @@ app.controller('ProjectsController', ['$scope', '$window', function($scope, $win
   };
 
   $scope.deleteProject = function(idx){
-    firebase.database().ref('projects/'+$scope.projects[idx].key).remove();
-    $scope.projects.splice(idx,1);
-    $scope.$apply();
+    if(confirm("Are you sure you want to delete this project?")){
+      firebase.database().ref('projects/'+$scope.projects[idx].key).remove();
+      $scope.projects.splice(idx,1);
+      $scope.$apply();
+    }
   };
 
   $scope.openProject = function(idx){
