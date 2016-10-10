@@ -20,6 +20,8 @@
 
 
 Features:
+
+
 1. Assembler directives
     1. .text / .code
     2. .data
@@ -60,12 +62,15 @@ Features:
 11. Comments 
 
 Pseudo Instructions:
-MOV Rd,Rs
-LDR Rd, =label | =offset
+
+1. MOV Rd,Rs
+2. LDR Rd, =label | =offset
 
 CPU:
-Memory 4MB
-Data Segment  2 MB —> 4 MB
-Stack Segment 1 MB —> 2 MB
-Text Segment  0 MB —> 1 MB
+
+1. Memory 4MB
+2. Data Segment  2 MB —> 4 MB
+3. Stack Segment 1 MB —> 2 MB
+4. Text Segment  0 MB —> 1 MB
+5. 15 Registers: 7 Low / 8 High including SP/LR/PC
 
