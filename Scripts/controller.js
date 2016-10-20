@@ -5,7 +5,7 @@ var app = angular.module("ArmSim", ['ngRoute','BinFilter','HexFilter','MemFilter
 app.config(function($routeProvider) {
   $routeProvider.
   when('/project/:proj_id',{
-      templateUrl: 'Simulator.html',
+      templateUrl: 'index.html',
       controller:'MainController'
     }).otherwise({redirectTo:'/'});
 });
@@ -199,7 +199,7 @@ app.controller('MainController', ['$scope','$routeParams','$timeout','$window','
       if(firebase.auth().currentUser != null){
         if($scope.isSave){
           switch (i) {
-            case 0: window.location.href = "Simulator.html"; break;
+            case 0: window.location.href = "index.html"; break;
             case 1: window.location.href = "projects.html"; break;
             case 2: window.location.href = "projects-all.html"; break;
             case 3: $scope.save(); break;
@@ -208,7 +208,7 @@ app.controller('MainController', ['$scope','$routeParams','$timeout','$window','
           }
         }else{
           switch (i) {
-            case 0: window.location.href = "Simulator.html"; break;
+            case 0: window.location.href = "index.html"; break;
             case 1: window.location.href = "projects.html"; break;
             case 2: window.location.href = "projects-all.html"; break;
             case 3: $scope.signOut(); break;

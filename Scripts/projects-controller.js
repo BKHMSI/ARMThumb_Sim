@@ -76,7 +76,7 @@ app.controller('ProjectsController', ['$scope', '$window', function($scope, $win
       getUserName();
     } else {
       alert("You must log in to view the projects");
-      window.location.href = "Simulator.html";
+      window.location.href = "index.html";
     }
   });
 
@@ -96,7 +96,7 @@ app.controller('ProjectsController', ['$scope', '$window', function($scope, $win
     var user = firebase.auth().currentUser;
     if(firebase.auth().currentUser != null){
       switch (i) {
-        case 0: window.location.href = "Simulator.html"; break;
+        case 0: window.location.href = "index.html"; break;
         case 1: window.location.href = "projects.html"; break;
         case 2: window.location.href = "projects-all.html"; break;
         case 3: $scope.signOut(); break;
@@ -153,7 +153,7 @@ app.controller('ProjectsController', ['$scope', '$window', function($scope, $win
 
   $scope.openProject = function(idx){
     var id = $scope.projects[idx].key;
-    var link = "Simulator.html#/project/"+id;
+    var link = "index.html#/project/"+id;
     $window.open(link);
   };
 
